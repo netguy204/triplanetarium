@@ -20,8 +20,8 @@ local Marker
 
 local tw = 64
 local th = 64
-local nw = 5
-local nh = 5
+local nw = 7
+local nh = 7
 local padding = 8
 
 function background()
@@ -149,6 +149,9 @@ function Board:init(offset, deck)
 end
 
 function Board:terminate()
+   if self.hl then
+      self.hl:delete_me(1)
+   end
    self.mesh:delete_me(1)
 end
 
@@ -252,7 +255,7 @@ end
 
 function Board:next_active()
    if util.empty(self.tiles) then
-      return {1,3}
+      return {1,4}
    end
 
    local lastrec = self:lastrec()
@@ -596,9 +599,9 @@ function init()
       deck:terminate()
       board:terminate()
       hand:terminate()
+      score:terminate()
       DynO.terminate_all(Tile)
       DynO.terminate_all(Marker)
-      DynO.terminate_all(Indicator)
       Sequence.terminate_all()
 
       deck = nil
