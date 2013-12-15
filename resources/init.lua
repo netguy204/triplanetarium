@@ -15,22 +15,27 @@ local Menu = require 'Menu'
 
 local czor = game:create_object('Compositor')
 
-local Tile
-local Board
-local Hand
-local Deck
-local Marker
-local EvalState
+-- intentionally globally scoped
+Tile = nil
+Board = nil
+Hand = nil
+Deck = nil
+Marker = nil
+EvalState = nil
+PSManager = nil
+Steam = nil
+SteamManager = nil
 
-local tw = 64
-local th = 64
-local padding = 8
+tw = 64
+th = 64
+padding = 8
 
-local deck = nil
-local board = nil
-local hand = nil
-local score = nil
-local marker = nil
+deck = nil
+board = nil
+hand = nil
+score = nil
+marker = nil
+steam_manager = nil
 
 function background()
    czor:clear_with_color(util.rgba(255,255,255,255))
@@ -53,6 +58,91 @@ local function steps_between(start, stop)
       if start == stop then
          return ii
       end
+   end
+end
+
+PSManager = oo.class(oo.Object)
+function PSManager:init(n, ctor)
+   self.n = n
+   self.systems = {}
+   for i = 1,n do
+      table.insert(self.systems, ctor())
+   end
+end
+
+function PSManager:activate(...)
+   local psys = table.remove(self.systems, 1)
+   psys:activate(...)
+   table.insert(self.systems, psys)
+   return psys
+end
+
+Steam = oo.class(oo.Object)
+function Steam:init(lifetime, speed)
+   self.lifetime = lifetime
+   self.speed = speed
+
+   local _art = game:atlas_entry(constant.ATLAS, 'steam')
+   local params =
+      {def=
+          {layer=constant.BACKGROUND,
+           n=50,
+           renderer={name='PSC_E2SystemRenderer',
+                     params={entry=_art}},
+           activator={name='PSConstantRateActivator',
+                      params={rate=0}},
+           components={
+              {name='PSConstantAccelerationUpdater',
+               params={acc={0,0}}},
+              {name='PSTimeAlphaUpdater',
+               params={time_constant=0.4,
+                       max_scale=1.0}},
+              {name='PSBoxInitializer',
+               params={initial={-16,-34,16,-30},
+                       refresh={-16,-34,16,-30},
+                       minv={0,0},
+                       maxv={0,0}}},
+              {name='PSTimeInitializer',
+               params={min_life=0.2,
+                       max_life=0.4}},
+              {name='PSRandColorInitializer',
+               params={min_color={1,1,1,1},
+                       max_color={1,1,1,1}}},
+              {name='PSTimeTerminator'}}}}
+
+   local system = stage:add_component('CParticleSystem', params)
+   local activator = system:def():find_component('PSConstantRateActivator')
+   local psbox = system:def():find_component('PSBoxInitializer')
+
+   self.activator = activator
+   self.psbox = psbox
+   self.timer = Timer()
+end
+
+function Steam:activate(center, w, h)
+   local rect = {center[1] - w/2, center[2] - h/2, center[1] + w/2, center[2] + h/2}
+   self.psbox:initial(rect)
+   self.psbox:refresh(rect)
+   self.psbox:minv({-self.speed, -self.speed})
+   self.psbox:maxv({self.speed, self.speed})
+   self.activator:rate(1000)
+   local term = function()
+      self.activator:rate(0)
+   end
+   self.timer:reset(self.lifetime, term)
+end
+
+SteamManager = oo.class(PSManager)
+function SteamManager:init(n)
+   local ctor = function()
+      return Steam(.3, 100)
+   end
+   PSManager.init(self, n, ctor)
+end
+
+function tile_steam_fn(center)
+   return function()
+      steam_manager:activate(center, tw, th)
    end
 end
 
@@ -307,7 +397,9 @@ function Board:place_animated(tile)
    local dest = self:place(tile)
 
    local anim = Sequence()
-   anim:animate_between(tile:go(), tile:pos(), self:loc2center(dest), .3)
+   local dpos = self:loc2center(dest)
+   anim:animate_between(tile:go(), tile:pos(), dpos, .3)
+   anim:next(tile_steam_fn(dpos))
    anim:next(tile:bind('show'))
    anim:next(tile:bind('fpos'), self:loc2center(dest))
    anim:next(self:bind('update'))
@@ -857,23 +949,7 @@ function Deck:empty()
    return util.empty(self.tiles)
 end
 
-local function last_is_one()
-   return marker:evaluate() == 1
-end
-
-local levels = {
-   {bstr = {'(s5)....'},
-    dstr = '2+6-',
-    win = last_is_one},
-   {bstr = {' ___  .....',
-            ' ___      .',
-            '(s3).....9.',
-            ' ___      .',
-            ' ___  .....'},
-    dstr = '3+3+9-2-5-3',
-    win = last_is_one}
-}
-
+local levels = require 'levels'
 local level_idx = 1
 
 function add_controls()
@@ -947,6 +1023,7 @@ function clean()
    stage = world:stage()
 
    world:gravity({0,0})
+
    local cam = stage:find_component('Camera', nil)
    cam:pre_render(util.fthread(background))
 end
@@ -954,14 +1031,24 @@ end
 function setup_level(idx)
    clean()
 
+   local cam = stage:find_component('Camera', nil)
+   local screen_rect = Rect(cam:viewport())
+   local screen_width = screen_rect:width()
+   local screen_height = screen_rect:height()
+
    local bstr = levels[idx].bstr
    local dstr = levels[idx].dstr
    local boardspec = parse_board(bstr, dstr)
-   deck = Deck({40,600}, boardspec.deck, false)
-   board = Board(vector.new({300, 100}), deck, boardspec)
-   score = Indicator(font_factory_big(1), {32, 64}, {0,0,0,1}, stage)
+   deck = Deck(vector.new({screen_width-tw, th}), boardspec.deck, false)
+   score = Indicator(font_factory_big(1), {tw/2, screen_height-th}, {0,0,0,1}, stage)
+
+   board = Board(vector.new({0, 1.5*th}), deck, boardspec)
+
    marker = Marker(board, score)
-   hand = Hand(deck, board, marker, 5, {300,50})
+   hand = Hand(deck, board, marker, 5, vector.new({0,th}))
+
+   steam_manager = SteamManager(2)
+
    score:update('0')
    add_controls()
 end
