@@ -26,6 +26,12 @@ local tw = 64
 local th = 64
 local padding = 8
 
+local deck = nil
+local board = nil
+local hand = nil
+local score = nil
+local marker = nil
+
 function background()
    czor:clear_with_color(util.rgba(255,255,255,255))
 end
@@ -851,57 +857,26 @@ function Deck:empty()
    return util.empty(self.tiles)
 end
 
-function init()
-   local deck = nil
-   local board = nil
-   local hand = nil
-   local score = nil
-   local marker = nil
+local function last_is_one()
+   return marker:evaluate() == 1
+end
 
-   util.install_basic_keymap()
-   util.install_mouse_map()
-   world:gravity({0,0})
+local levels = {
+   {bstr = {'(s5)....'},
+    dstr = '2+6-',
+    win = last_is_one},
+   {bstr = {' ___  .....',
+            ' ___      .',
+            '(s3).....9.',
+            ' ___      .',
+            ' ___  .....'},
+    dstr = '3+3+9-2-5-3',
+    win = last_is_one}
+}
 
-   local cam = stage:find_component('Camera', nil)
-   cam:pre_render(util.fthread(background))
+local level_idx = 1
 
-   local clean = function()
-      deck:terminate()
-      board:terminate()
-      hand:terminate()
-      score:terminate()
-      DynO.terminate_all(Tile)
-      DynO.terminate_all(Marker)
-      Sequence.terminate_all()
-
-      deck = nil
-      board = nil
-      hand = nil
-      socre = nil
-      marker = nil
-   end
-
-   local restart = function()
-      if deck then
-         clean()
-      end
-
-      bstr = {' ___  .....',
-              ' ___      .',
-              '(s3).....9.',
-              ' ___      .',
-              ' ___  .....'}
-      dstr = '3+3+9-2-5-3'
-      local boardspec = parse_board(bstr, dstr)
-      deck = Deck({40,600}, boardspec.deck, false)
-      board = Board(vector.new({300, 100}), deck, boardspec)
-      score = Indicator(font_factory_big(1), {32, 64}, {0,0,0,1}, stage)
-      marker = Marker(board, score)
-      hand = Hand(deck, board, marker, 5, {300,50})
-      score:update('0')
-   end
-
-   restart()
+function add_controls()
    local hl = stage:add_component('CTestDisplay', {w=tw, h=th,
                                                    color={1,1,1,.3}})
    local click = util.rising_edge_trigger(false)
@@ -948,13 +923,54 @@ function init()
 
    local messages = function()
       if stage:has_message(GAME_OVER) then
-         restart()
+         local testwin = levels[level_idx].win
+         if testwin() then
+            -- next level!
+            level_idx = level_idx + 1
+            if level_idx > #levels then
+               -- you win them all! (make it worth it)
+               clean()
+               return
+            end
+         end
+         setup_level(level_idx)
       end
    end
 
    stage:add_component('CScripted', {update_thread=util.fthread(controls),
                                      message_thread=util.fthread(messages)})
+end
 
+function clean()
+   world:delete_me(1)
+   world = game:create_world()
+   stage = world:stage()
+
+   world:gravity({0,0})
+   local cam = stage:find_component('Camera', nil)
+   cam:pre_render(util.fthread(background))
+end
+
+function setup_level(idx)
+   clean()
+
+   local bstr = levels[idx].bstr
+   local dstr = levels[idx].dstr
+   local boardspec = parse_board(bstr, dstr)
+   deck = Deck({40,600}, boardspec.deck, false)
+   board = Board(vector.new({300, 100}), deck, boardspec)
+   score = Indicator(font_factory_big(1), {32, 64}, {0,0,0,1}, stage)
+   marker = Marker(board, score)
+   hand = Hand(deck, board, marker, 5, {300,50})
+   score:update('0')
+   add_controls()
+end
+
+function init()
+   util.install_basic_keymap()
+   util.install_mouse_map()
+
+   setup_level(level_idx)
 end
 
 function game_init()
