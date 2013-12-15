@@ -16,27 +16,12 @@ local Deck
 
 local tw = 64
 local th = 64
-local nw = 8
-local nh = 8
+local nw = 9
+local nh = 9
 local padding = 8
 
 function background()
    czor:clear_with_color(util.rgba(255,255,255,255))
-end
-
-local function animate_between(item)
-   local s = (1 - item.rdt / item.dt)
-   local dx = item.stop - item.start
-   local x = item.start + dx * s
-
-   item.go:pos(x)
-   item.rdt = item.rdt - world:dt()
-   if item.rdt <= 0 then
-      item.go:pos(item.stop)
-      return false
-   else
-      return true
-   end
 end
 
 local Sequence = oo.class(oo.Object)
@@ -45,15 +30,48 @@ function Sequence:init()
    self.running = false
 end
 
-function Sequence:animate_between(go, start, stop, dt)
-   table.insert(self.queue, {fn=animate_between, arg={go=go, start=start, stop=stop, dt=dt, rdt=dt}})
+local function lerp(start, stop, dt, rdt)
+   local s = (1 - rdt / dt)
+   local dx = stop - start
+   return start + dx * s
 end
+
+function Sequence:animate_between(go, start, stop, dt)
+   local animate_between = function(item)
+      local x = lerp(item.start, item.stop, item.dt, item.rdt)
+      item.go:pos(x)
+      item.rdt = item.rdt - world:dt()
+      if item.rdt <= 0 then
+         item.go:pos(item.stop)
+         return false
+      else
+         return true
+      end
+   end
+   self:next(animate_between, {go=go, start=start, stop=stop, dt=dt, rdt=dt})
+end
+
+function Sequence:rotate_between(go, start, stop, dt)
+   local rotate_between = function(item)
+      local a = lerp(item.start, item.stop, item.dt, item.rdt)
+      item.go:angle(a)
+      item.rdt = item.rdt - world:dt()
+      if item.rdt <= 0 then
+         item.go:angle(stop)
+         return false
+      else
+         return true
+      end
+   end
+   self:next(rotate_between, {go=go, start=start, stop=stop, dt=dt, rdt=dt})
+end
+
 
 function Sequence:next(fn, ...)
    local lfn = function(item)
-      return fn(unpack(item))
+      return fn(table.unpack(item))
    end
-   table.insert(self.queue, {fn=fn, item={...}})
+   table.insert(self.queue, {fn=lfn, arg={...}})
 end
 
 function Sequence:start()
@@ -80,11 +98,24 @@ function Sequence:start()
 end
 
 local DIRECTION = {
-   NORTH = {angle=0, offset=vector.new({0,1})},
-   SOUTH = {angle=math.pi, offset=vector.new({0,-1})},
-   EAST =  {angle=-math.pi/2, offset=vector.new({1,0})},
-   WEST =  {angle=math.pi/2, offset=vector.new({-1,0})}
+   NORTH = {angle=0, offset=vector.new({0,1}), next='EAST'},
+   SOUTH = {angle=math.pi, offset=vector.new({0,-1}), next='WEST'},
+   EAST =  {angle=-math.pi/2, offset=vector.new({1,0}), next='SOUTH'},
+   WEST =  {angle=math.pi/2, offset=vector.new({-1,0}), next='NORTH'}
 }
+
+local function steps_between(start, stop)
+   if start == stop then
+      return 0
+   end
+
+   for ii = 1,3 do
+      start = DIRECTION[start].next
+      if start == stop then
+         return ii
+      end
+   end
+end
 
 Tile = oo.class(DynO)
 function Tile:init(center, n, d)
@@ -98,9 +129,13 @@ function Tile:init(center, n, d)
    self:hide()
 end
 
+function Tile:isnumber()
+   return util.isnumber(self.n)
+end
+
 function Tile:direction(name)
    if not name then
-      return DIRECTION[self.d]
+      return self.d
    else
       self.d = name
       if self.t3 then
@@ -169,24 +204,144 @@ end
 Board = oo.class(oo.Object)
 function Board:init(offset, deck)
    self.offset = offset
-   local tiles = {}
+   self.tiles = {}
+
+   local mesh = self:board_mesh()
+   self.mesh = stage:add_component('CMesh', {mesh=mesh})
+
    local tile = deck:draw_number()
-   tiles[{1,nh}] = tile
    tile:direction('EAST')
+   self:place_animated(tile)
+end
+
+function Board:place_animated(tile)
+   local dest = self:place(tile)
 
    local anim = Sequence()
-   anim:animate_between(tile:go(), tile:pos(), self:loc2center({1,nh}), .3)
+   anim:animate_between(tile:go(), tile:pos(), self:loc2center(dest), .3)
    anim:next(tile:bind('show'))
-   anim:next(tile:bind('fpos'), self:loc2center({1,nh}))
+   anim:next(tile:bind('fpos'), self:loc2center(dest))
+   anim:next(self:bind('update'))
    anim:start()
+   return anim
+end
 
-   self.tiles = tiles
-   self.nw = nw
-   self.nh = nh
+function Board:rotate_animated(tile)
+   tile = tile or self:lastrec().tile
+   local nextdir = self:next_direction()
+
+   local start = 0
+   local stop = steps_between(tile:direction(), nextdir) * -math.pi/2
+   local anim = Sequence()
+
+   anim:rotate_between(tile:go(), start, stop, .3)
+   anim:next(function()
+                tile:go():angle(0)
+                tile:direction(nextdir)
+                self:update()
+   end)
+   anim:start()
+   return anim
+end
+
+function Board:board_mesh()
+   local mesh = game:create_object('Mesh')
+   local color = {0,0,0,1}
+   local offset = self.offset + {tw/2, th/2}
+
+   for hz = 1,(nh+1) do
+      mesh:add_point(offset + {0, th * (hz-1)}, color)
+      mesh:add_point(offset + {nw*tw, th * (hz-1)}, color)
+   end
+
+   for vr = 1,(nw+1) do
+      mesh:add_point(offset + {tw * (vr-1), 0}, color)
+      mesh:add_point(offset + {tw * (vr-1), th*nh}, color)
+   end
+
+   mesh:type(constant.LINES)
+   return mesh
+end
+
+function Board:place(tile)
+   local dest = self:next_active()
+   table.insert(self.tiles, {tile=tile, loc=vector.new(dest)})
+
+   local valids = self:valid_directions()
+   tile:direction(valids[1])
+
+   return dest
+end
+
+function Board:update()
+   if self.hl then
+      self.hl:delete_me(1)
+   end
+
+   local nl = self:next_active()
+   local cc = self:loc2center(nl)
+   self.hl = stage:add_component('CTestDisplay', {offset=cc, w=tw, h=th,
+                                                  color={.8,.8,1,1}})
+end
+
+function Board:lastrec()
+   return self.tiles[#self.tiles]
+end
+
+function Board:next_active()
+   if util.empty(self.tiles) then
+      return {1,5}
+   end
+
+   local lastrec = self:lastrec()
+   local lastloc = lastrec.loc
+   local nl = lastrec.loc + DIRECTION[lastrec.tile.d].offset
+   if nl[1] < 1 or nl[1] > nw or nl[2] < 1 or nl[2] > nh then
+      return nil
+   else
+      return nl
+   end
+end
+
+function Board:tile_at(loc)
+   for ii=1,#self.tiles do
+      if self.tiles[ii].loc:equals(loc) then
+         return self.tiles[ii]
+      end
+   end
+end
+
+function Board:valid_directions()
+   local valids = {}
+   local lastrec = self:lastrec()
+   local dir = lastrec.tile:direction()
+   for ii=1,4 do
+      local dirobj = DIRECTION[dir]
+      local tgtloc = lastrec.loc + dirobj.offset
+      local tgttile = self:tile_at(tgtloc)
+      -- fixme for loops
+      if not tgttile and tgtloc[1] > 0 and tgtloc[1] <= nw and tgtloc[2] > 0 and tgtloc[2] <= nh then
+         table.insert(valids, dir)
+      end
+      dir = dirobj.next
+   end
+   return valids
+end
+
+function Board:next_direction()
+   local valids = self:valid_directions()
+   if #valids > 1 then
+      return valids[2]
+   end
 end
 
 function Board:loc2center(loc)
    return self.offset + {loc[1] * tw, loc[2] * th}
+end
+
+function Board:wants_number()
+   local lastrec = self:lastrec()
+   return not lastrec.tile:isnumber()
 end
 
 function Board:worldpos2loc(pos)
@@ -218,25 +373,113 @@ function Board:worldpos2rect(pos)
    return Rect.centered(cc, tw, th)
 end
 
+
 Hand = oo.class(oo.Object)
-function Hand:init(deck, max, offset)
+function Hand:init(deck, board, max, offset)
    self.max = max
    self.tiles = {}
    self.offset = vector.new(offset)
-
-   local anim = Sequence()
-   for ii=1,max do
-      local tile = deck:draw()
-      self.tiles[ii] = tile
-      anim:animate_between(tile:go(), tile:pos(), self:idx2center(ii), .3)
-      anim:next(tile:bind('show'))
-      anim:next(tile:bind('fpos'), self:idx2center(ii))
-   end
-   anim:start()
+   self.deck = deck
+   self.highlights = {}
+   self.board = board
+   self:update()
 end
 
 function Hand:idx2center(ii)
    return self.offset + {ii * tw, 0}
+end
+
+function Hand:worldpos2loc(pos)
+   pos = pos - self.offset
+   local xx = util.round(pos[1] / tw)
+   local yy = util.round(pos[2] / th)
+
+   if xx < 1 or xx > self.max or yy ~= 0 then
+      return nil
+   else
+      return xx
+   end
+end
+
+function Hand:worldpos2center(pos)
+   local loc = self:worldpos2loc(pos)
+   if loc then
+      return self:idx2center(loc)
+   else
+      return nil
+   end
+end
+
+function Hand:worldpos2rect(pos)
+   local cc = self:worldpos2center(pos)
+   if cc then
+      return Rect.centered(cc, tw, th)
+   else
+      return nil
+   end
+end
+
+function Hand:draw(ii, ganim)
+   local anim = ganim or Sequence()
+   local tile = self.deck:draw()
+   self.tiles[ii] = tile
+   anim:animate_between(tile:go(), tile:pos(), self:idx2center(ii), .3)
+   anim:next(tile:bind('show'))
+   anim:next(tile:bind('fpos'), self:idx2center(ii))
+
+   -- automatically animate unless we were given one
+   if not ganim then
+      anim:start()
+   end
+end
+
+function Hand:take(ii)
+   local result = self.tiles[ii]
+   self.tiles[ii] = nil
+   return result
+end
+
+function Hand:valid_tiles()
+   local wantnum = self.board:wants_number()
+   local valids = {}
+   for ii=1,self.max do
+      if self.tiles[ii] then
+         local isnum = self.tiles[ii]:isnumber()
+         if wantnum == isnum then
+            table.insert(valids, ii)
+         end
+      end
+   end
+   return valids
+end
+
+function Hand:update()
+   local anim = Sequence()
+   for ii=1,self.max do
+      if not self.tiles[ii] then
+         self:draw(ii, anim)
+      end
+   end
+
+   -- remove old highlights
+   for ii=1,#self.highlights do
+      self.highlights[ii]:delete_me(1)
+   end
+   self.highlights = {}
+
+   -- add new highlights
+   local hl = function()
+      local valids = self:valid_tiles()
+
+      for ii=1,#valids do
+         local cc = self:idx2center(valids[ii])
+         table.insert(self.highlights,
+                      stage:add_component('CTestDisplay', {offset=cc, w=tw, h=th,
+                                                           color={1,1,1,.3}}))
+      end
+   end
+   anim:next(hl)
+   anim:start()
 end
 
 Deck = oo.class(oo.Object)
@@ -249,7 +492,7 @@ function Deck:init(offset)
 
    self.tiles = {}
    for ii=1,#values do
-      local tile = Tile(self.offset, values[ii], 'NORTH')
+      local tile = Tile(self.offset, values[ii], 'EAST')
       tile:hide()
       table.insert(self.tiles, tile)
    end
@@ -267,7 +510,7 @@ end
 
 function Deck:draw_number()
    for ii=1,#self.tiles do
-      if util.isnumber(self.tiles[ii].n) then
+      if self.tiles[ii]:isnumber() then
          local tile = self.tiles[ii]
          table.remove(self.tiles, ii)
          return tile
@@ -279,6 +522,13 @@ function Deck:pos()
    return self.offset
 end
 
+function Deck:empty()
+   return util.empty(self.tiles)
+end
+
+local PLAY_TILE = 1
+local ROTATE_TILE = 2
+
 function init()
    util.install_basic_keymap()
    util.install_mouse_map()
@@ -287,20 +537,54 @@ function init()
    local cam = stage:find_component('Camera', nil)
    cam:pre_render(util.fthread(background))
 
-   local deck = Deck({800,600})
-   local hand = Hand(deck, 5, {800,200})
-   local board = Board(vector.new({-16, -16}), deck)
+   local deck = Deck({40,600})
+   local board = Board(vector.new({300, 100}), deck)
+   local hand = Hand(deck, board, 5, {300,50})
 
    local hl = stage:add_component('CTestDisplay', {w=tw, h=th,
                                                    color={1,1,1,.3}})
-   local input = function()
+   local click = util.rising_edge_trigger(false)
+
+   local controls = function()
       local mouse = util.mouse_state()
-      local rect = board:worldpos2rect(mouse)
-      if rect then
-         hl:offset(rect:center())
+      local input = util.input_state()
+
+      local hrect = hand:worldpos2rect(mouse)
+      local brect = board:worldpos2rect(mouse)
+
+      if hrect then
+         local ii = hand:worldpos2loc(mouse)
+         local valids = hand:valid_tiles()
+         local isvalid = util.contains(valids, ii)
+
+         if isvalid then
+            hl:offset(hrect:center())
+         else
+            hl:offset({-100, -100})
+         end
+
+         -- selected?
+         if click(input.mouse1) then
+            if isvalid then
+               local tile = hand:take(ii)
+               local anim = board:place_animated(tile)
+               if not deck:empty() then
+                  hand:draw(ii, anim)
+               end
+               anim:next(hand:bind('update'))
+            end
+         end
+      elseif brect then
+         hl:offset(brect:center())
+
+         if click(input.mouse1) then
+            board:rotate_animated()
+         end
+      else
+         hl:offset({-100, -100})
       end
    end
-   stage:add_component('CScripted', {update_thread=util.fthread(input)})
+   stage:add_component('CScripted', {update_thread=util.fthread(controls)})
 
 end
 
