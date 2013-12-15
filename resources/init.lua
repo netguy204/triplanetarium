@@ -149,7 +149,107 @@ local function square_board(nw, nh)
    return bs
 end
 
+local BParser = oo.class(oo.Object)
+function BParser:init(str)
+   self.str = str
+   self.nidx = 1
+   self.nloc = 1
+end
+
+function BParser:hasmore()
+   return self.nidx <= string.len(self.str)
+end
+
+function BParser:char()
+   if self:hasmore() then
+      return self.str:sub(self.nidx, self.nidx)
+   end
+end
+
+function BParser:advance()
+   local ch = self:char()
+   self.nidx = self.nidx + 1
+   return ch
+end
+
+function BParser:advance_location()
+   local loc = self.nloc
+   self.nloc = self.nloc + 1
+   return loc
+end
+
+function BParser:next()
+   -- bail if no more data
+   if not self:hasmore() then
+      return nil
+   end
+
+   -- consume comment marks
+   local ch = self:advance()
+   while ch == '_' do
+      ch = self:advance()
+   end
+
+   -- read chords as a unit
+   if ch == '(' then
+      local choord = ''
+      ch = self:advance()
+      while ch and ch ~= ')' do
+         choord = choord .. ch
+         ch = self:advance()
+      end
+      local num = tonumber(choord)
+      return { value = num or choord, loc = self:advance_location() }
+   else
+      local num = tonumber(ch)
+      return { value = num or ch, loc = self:advance_location() }
+   end
+end
+
+
+--
+-- s.......
+--        .
+--      e..
 local function parse_board(bstr, dstr)
+   local h = #bstr
+   local locs = {}
+   local start = {1,1}
+   local deck = {}
+   local recs = {}
+
+   for ii=1,h do
+      local row = BParser(bstr[h - (ii - 1)])
+
+      while row:hasmore() do
+         local ncol = row:next()
+         local loc = {ncol.loc, ii}
+         local ch = ncol.value
+
+         if ch == 's' then
+            start = loc
+         elseif ch == '.' then
+            table.insert(locs, loc)
+         elseif util.isnumber(ch) then
+            local num = tonumber(ch)
+            table.insert(locs, loc)
+            table.insert(recs, {loc=loc, tile=tile,
+                                n=num, d='EAST'})
+         end
+      end
+   end
+
+   for ii=1,string.len(dstr) do
+      local ch = dstr:sub(ii, ii)
+      local num = tonumber(ch)
+      if num then
+         table.insert(deck, num)
+      else
+         table.insert(deck, ch)
+      end
+   end
+
+   return {locs=locs, start=start, deck=deck}
 end
 
 Board = oo.class(oo.Object)
@@ -369,10 +469,8 @@ function Board:loc2center(loc)
 end
 
 function Board:wants_number()
-   print('start wants num')
    local state = EvalState(self)
    state:last()
-   print('end wants num')
    return state:wants_number()
 end
 
@@ -492,7 +590,6 @@ function Marker:evaluate()
    local state = EvalState(self.board)
    local value = 0
 
-   print('start')
    while true do
       local rec = state:next()
       if not rec then
@@ -500,7 +597,6 @@ function Marker:evaluate()
       end
 
       local tile = rec.tile
-      print(tile.n)
 
       if tile:isnumber() then
          if not op then
@@ -514,7 +610,6 @@ function Marker:evaluate()
          op = tile.n
       end
    end
-   print('end')
 
    return value
 end
@@ -686,12 +781,12 @@ function Hand:check_game_over()
 end
 
 Deck = oo.class(oo.Object)
-function Deck:init(offset)
+function Deck:init(offset, values, shuffle)
    self.offset = vector.new(offset)
 
-   local values = {2, 3, 4, 4, 5, 5, 7, 9, 9,
-                   '+', '+', '+', '+', '-', '-', '-', '-'}
-   values = util.rand_shuffle(values)
+   if shuffle then
+      values = util.rand_shuffle(values)
+   end
 
    self.tiles = {}
    for ii=1,#values do
@@ -767,8 +862,15 @@ function init()
          clean()
       end
 
-      deck = Deck({40,600})
-      board = Board(vector.new({300, 100}), deck, square_board(7,7))
+      bstr = {'   .....',
+              '       .',
+              's......9',
+              '       .',
+              '   .....'}
+      dstr = '3+3+9-2-5-3'
+      local boardspec = parse_board(bstr, dstr)
+      deck = Deck({40,600}, boardspec.deck, false)
+      board = Board(vector.new({300, 100}), deck, boardspec)
       score = Indicator(font_factory_big(1), {32, 64}, {0,0,0,1}, stage)
       marker = Marker(board, score)
       hand = Hand(deck, board, marker, 5, {300,50})
