@@ -598,6 +598,8 @@ function init()
       hand:terminate()
       DynO.terminate_all(Tile)
       DynO.terminate_all(Marker)
+      DynO.terminate_all(Indicator)
+      Sequence.terminate_all()
 
       deck = nil
       board = nil
