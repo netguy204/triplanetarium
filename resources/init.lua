@@ -58,7 +58,7 @@ function Tile:init(center, n, d)
    go:body_type(constant.STATIC)
    self:fpos(center)
    self.n = n
-   self.d = d
+   self:direction(d)
    self:hide()
 end
 
@@ -198,14 +198,35 @@ function BParser:next()
          choord = choord .. ch
          ch = self:advance()
       end
-      local num = tonumber(choord)
-      return { value = num or choord, loc = self:advance_location() }
+
+      return { value = choord, loc = self:advance_location(),
+               num = self:choord_num(choord),
+               dir = self:choord_dir(choord),
+               cmd = choord:sub(1,1) }
    else
-      local num = tonumber(ch)
-      return { value = num or ch, loc = self:advance_location() }
+      return { value = ch, loc = self:advance_location(),
+               num = self:choord_num(ch),
+               dir = self:choord_dir(ch),
+               cmd = ch:sub(1,1) }
    end
 end
 
+local choord_dir_table = {
+   E = 'EAST',
+   S = 'SOUTH',
+   W = 'WEST',
+   N = 'NORTH'
+}
+
+function BParser:choord_dir(choord)
+   local lchr = choord:sub(string.len(choord))
+   return choord_dir_table[lchr] or 'EAST'
+end
+
+function BParser:choord_num(choord)
+   local numstr = choord:match('%d+')
+   return tonumber(numstr)
+end
 
 --
 -- s.......
@@ -214,7 +235,7 @@ end
 local function parse_board(bstr, dstr)
    local h = #bstr
    local locs = {}
-   local start = {1,1}
+   local start
    local deck = {}
    local recs = {}
 
@@ -222,19 +243,15 @@ local function parse_board(bstr, dstr)
       local row = BParser(bstr[h - (ii - 1)])
 
       while row:hasmore() do
-         local ncol = row:next()
-         local loc = {ncol.loc, ii}
-         local ch = ncol.value
-
-         if ch == 's' then
-            start = loc
-         elseif ch == '.' then
+         local val = row:next()
+         local loc = vector.new({val.loc, ii})
+         if val.cmd == 's' then
+            start = {loc=loc, n=val.num, d=val.dir}
+         elseif val.cmd == '.' then
             table.insert(locs, loc)
-         elseif util.isnumber(ch) then
-            local num = tonumber(ch)
+         elseif val.num then
             table.insert(locs, loc)
-            table.insert(recs, {loc=loc, tile=tile,
-                                n=num, d='EAST'})
+            table.insert(recs, {loc=loc, n=val.num, d=val.dir})
          end
       end
    end
@@ -249,7 +266,9 @@ local function parse_board(bstr, dstr)
       end
    end
 
-   return {locs=locs, start=start, deck=deck}
+   -- start is always the last rec
+   table.insert(recs, start)
+   return {locs=locs, recs=recs, deck=deck}
 end
 
 Board = oo.class(oo.Object)
@@ -257,13 +276,18 @@ function Board:init(offset, deck, boardspec)
    self.offset = offset
    self.tiles = {}
    self.boardspec = boardspec
+   self.firstidx = #boardspec.recs
+
+   -- construct the tiles required by the spec
+   for ii=1,#boardspec.recs do
+      local rec = boardspec.recs[ii]
+      local tile = Tile(self:loc2center(rec.loc), rec.n, rec.d)
+      tile:show()
+      table.insert(self.tiles, {tile=tile, loc=rec.loc})
+   end
 
    local mesh = self:board_mesh()
    self.mesh = stage:add_component('CMesh', {mesh=mesh, layer=constant.BACKERGROUND})
-
-   local tile = deck:draw_number()
-   tile:direction('EAST')
-   self:place_animated(tile)
 end
 
 function Board:terminate()
@@ -361,7 +385,7 @@ function Board:update()
 end
 
 function Board:firstrec()
-   return self.tiles[1]
+   return self.tiles[self.firstidx]
 end
 
 function Board:nextrec(rec)
@@ -862,11 +886,11 @@ function init()
          clean()
       end
 
-      bstr = {'   .....',
-              '       .',
-              's......9',
-              '       .',
-              '   .....'}
+      bstr = {' ___  .....',
+              ' ___      .',
+              '(s3).....9.',
+              ' ___      .',
+              ' ___  .....'}
       dstr = '3+3+9-2-5-3'
       local boardspec = parse_board(bstr, dstr)
       deck = Deck({40,600}, boardspec.deck, false)
