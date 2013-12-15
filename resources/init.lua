@@ -3,6 +3,8 @@ local util = require 'util'
 local vector = require 'vector'
 local constant = require 'constant'
 local font_factory = require 'dejavu_font'
+local font_factory_big = require 'dejavu_font_big'
+local font_factory_mid = require 'dejavu_font_mid'
 
 local Timer = require 'Timer'
 local Rect = require 'Rect'
@@ -12,16 +14,16 @@ local Sequence = require 'Sequence'
 local Menu = require 'Menu'
 
 local czor = game:create_object('Compositor')
+
 local Tile
 local Board
 local Hand
 local Deck
 local Marker
+local EvalState
 
 local tw = 64
 local th = 64
-local nw = 7
-local nh = 7
 local padding = 8
 
 function background()
@@ -29,10 +31,10 @@ function background()
 end
 
 local DIRECTION = {
-   NORTH = {angle=0, offset=vector.new({0,1}), next='EAST'},
-   SOUTH = {angle=math.pi, offset=vector.new({0,-1}), next='WEST'},
-   EAST =  {angle=-math.pi/2, offset=vector.new({1,0}), next='SOUTH'},
-   WEST =  {angle=math.pi/2, offset=vector.new({-1,0}), next='NORTH'}
+   NORTH = {angle=0, offset=vector.new({0,1}), next='EAST', opposite='SOUTH'},
+   SOUTH = {angle=math.pi, offset=vector.new({0,-1}), next='WEST', opposite='NORTH'},
+   EAST =  {angle=-math.pi/2, offset=vector.new({1,0}), next='SOUTH', opposite='WEST'},
+   WEST =  {angle=math.pi/2, offset=vector.new({-1,0}), next='NORTH', opposite='EAST'}
 }
 
 local function steps_between(start, stop)
@@ -76,7 +78,7 @@ function Tile:direction(name)
 end
 
 function Tile:show()
-   local font = font_factory(2)
+   local font = font_factory_mid(1)
    local str = tostring(self.n)
    local sw = font:string_width(str)
    local sh = font:line_height(str)
@@ -84,10 +86,10 @@ function Tile:show()
    self:hide(true)
    local go = self:go()
    self.t1 = go:add_component('CDrawText', {font=font, color={0,0,0,1}, message=str,
-                                            offset={-sw/2, -sh/8-2},
+                                            offset={-sw/2-2, -sh/2+2},
                                             layer=constant.BACKGROUND})
    self.t2 = go:add_component('CDrawText', {font=font, color={1,1,1,1}, message=str,
-                                            offset={-sw/2, -sh/8},
+                                            offset={-sw/2, -sh/2},
                                             layer=constant.BACKGROUND})
 
 
@@ -135,10 +137,26 @@ function Tile:fpos(pos)
    self:pos(pos)
 end
 
+local function square_board(nw, nh)
+   local locs = {}
+   local bs = {locs=locs, start={1, util.round(nh/2)}}
+
+   for yy = 1,nh do
+      for xx = 1,nw do
+         table.insert(locs, {xx, yy})
+      end
+   end
+   return bs
+end
+
+local function parse_board(bstr, dstr)
+end
+
 Board = oo.class(oo.Object)
-function Board:init(offset, deck)
+function Board:init(offset, deck, boardspec)
    self.offset = offset
    self.tiles = {}
+   self.boardspec = boardspec
 
    local mesh = self:board_mesh()
    self.mesh = stage:add_component('CMesh', {mesh=mesh, layer=constant.BACKERGROUND})
@@ -193,16 +211,25 @@ end
 function Board:board_mesh()
    local mesh = game:create_object('Mesh')
    local color = {0,0,0,1}
-   local offset = self.offset + {tw/2, th/2}
 
-   for hz = 1,(nh+1) do
-      mesh:add_point(offset + {0, th * (hz-1)}, color)
-      mesh:add_point(offset + {nw*tw, th * (hz-1)}, color)
-   end
+   for ii = 1,#self.boardspec.locs do
+      local cc = self:loc2center(self.boardspec.locs[ii])
+      local ll = cc - {tw/2, th/2}
+      local ul = ll + {0, th}
+      local lr = ll + {tw, 0}
+      local ur = ll + {tw, th}
 
-   for vr = 1,(nw+1) do
-      mesh:add_point(offset + {tw * (vr-1), 0}, color)
-      mesh:add_point(offset + {tw * (vr-1), th*nh}, color)
+      mesh:add_point(ll, color)
+      mesh:add_point(ul, color)
+
+      mesh:add_point(ul, color)
+      mesh:add_point(ur, color)
+
+      mesh:add_point(ur, color)
+      mesh:add_point(lr, color)
+
+      mesh:add_point(lr, color)
+      mesh:add_point(ll, color)
    end
 
    mesh:type(constant.LINES)
@@ -233,6 +260,16 @@ function Board:update()
    end
 end
 
+function Board:firstrec()
+   return self.tiles[1]
+end
+
+function Board:nextrec(rec)
+   local lastloc = rec.loc
+   local nextloc = lastloc + DIRECTION[rec.tile.d].offset
+   return self:rec_at(nextloc)
+end
+
 function Board:lastrec()
    return self.tiles[#self.tiles]
 end
@@ -253,22 +290,53 @@ function Board:lastrect()
    return Rect.centered(self:lastpos(), tw, th)
 end
 
+function Board:valid_offset_from(loc, dir)
+   local dirobj = DIRECTION[dir]
+   local offset = dirobj.offset
+   local nl = loc + offset
+
+   for ii = 1,2 do
+      -- abort if we fall off the board
+      if not self:loc_at(nl) then
+         return nil
+      end
+
+      local rec = self:rec_at(nl)
+      if not rec then
+         return nl
+      else
+         local tile = rec.tile
+
+         -- opposites block progress
+         if tile.d == dirobj.opposite then
+            return nil
+         else
+            nl = nl + offset
+         end
+      end
+   end
+end
+
 function Board:next_active()
    if util.empty(self.tiles) then
-      return {1,4}
+      return self.boardspec.start
    end
 
    local lastrec = self:lastrec()
    local lastloc = lastrec.loc
-   local nl = lastrec.loc + DIRECTION[lastrec.tile.d].offset
-   if nl[1] < 1 or nl[1] > nw or nl[2] < 1 or nl[2] > nh or self:tile_at(nl) then
-      return nil
-   else
-      return nl
+   return self:valid_offset_from(lastloc, lastrec.tile.d)
+end
+
+function Board:loc_at(loc)
+   for ii=1,#self.boardspec.locs do
+      local tloc = self.boardspec.locs[ii]
+      if loc:equals(tloc) then
+         return ii
+      end
    end
 end
 
-function Board:tile_at(loc)
+function Board:rec_at(loc)
    for ii=1,#self.tiles do
       if self.tiles[ii].loc:equals(loc) then
          return self.tiles[ii]
@@ -281,14 +349,10 @@ function Board:valid_directions()
    local lastrec = self:lastrec()
    local dir = lastrec.tile:direction()
    for ii=1,4 do
-      local dirobj = DIRECTION[dir]
-      local tgtloc = lastrec.loc + dirobj.offset
-      local tgttile = self:tile_at(tgtloc)
-      -- fixme for loops
-      if not tgttile and tgtloc[1] > 0 and tgtloc[1] <= nw and tgtloc[2] > 0 and tgtloc[2] <= nh then
+      if self:valid_offset_from(lastrec.loc, dir) then
          table.insert(valids, dir)
       end
-      dir = dirobj.next
+      dir = DIRECTION[dir].next
    end
    return valids
 end
@@ -305,18 +369,20 @@ function Board:loc2center(loc)
 end
 
 function Board:wants_number()
-   local lastrec = self:lastrec()
-   return not lastrec.tile:isnumber()
+   print('start wants num')
+   local state = EvalState(self)
+   state:last()
+   print('end wants num')
+   return state:wants_number()
 end
 
 function Board:worldpos2loc(pos)
    pos = pos - self.offset
    local xx = util.round(pos[1] / tw)
    local yy = util.round(pos[2] / th)
-   if xx < 1 or xx > nw or yy < 1 or yy > nh then
-      return nil
-   else
-      return {xx, yy}
+   local loc = {xx, yy}
+   if self:loc_at(loc) then
+      return loc
    end
 end
 
@@ -338,6 +404,59 @@ function Board:worldpos2rect(pos)
    return Rect.centered(cc, tw, th)
 end
 
+EvalState = oo.class()
+function EvalState:init(board)
+   self.board = board
+   self.current = nil
+end
+
+function EvalState:next()
+   if not self.current then
+      self.current = self.board:firstrec()
+      self.seen = {self.current.tile}
+   else
+      -- check for a direction override and clear it
+      local dir = self.next_dir or self.current.tile.d
+      self.next_dir = nil
+
+      -- get the next tile
+      local nl = self.current.loc + DIRECTION[dir].offset
+      local nr = self.board:rec_at(nl)
+
+      -- if it's something we've seen before then use the current
+      -- direction as an override for the next call
+      if nr and util.contains(self.seen, nr.tile) then
+         self.next_dir = dir
+      end
+
+      -- don't go past the end
+      if not nr then
+         return nil
+      else
+         self.current = nr
+         table.insert(self.seen, nr.tile)
+      end
+   end
+
+   return self.current
+end
+
+function EvalState:last()
+   local n = self:next()
+   while n do
+      n = self:next()
+   end
+   return self.current
+end
+
+function EvalState:wants_number()
+   return self.current and (not self.current.tile:isnumber())
+end
+
+function EvalState:wants_op()
+   return self.current and self.current.tile:isnumber()
+end
+
 Marker = oo.class(DynO)
 function Marker:init(board, score)
    DynO.init(self, {0,0})
@@ -351,6 +470,7 @@ function Marker:init(board, score)
    self.board = board
    self.score = score
    self.score_value = 0
+   self.state = EvalState(board)
 
    -- hokey to put this here
    local anim = Sequence()
@@ -359,12 +479,29 @@ function Marker:init(board, score)
    anim:start()
 end
 
+function Marker:wants_number()
+   return self.state:wants_number()
+end
+
+function Marker:wants_op()
+   return self.state:wants_op()
+end
+
 function Marker:evaluate()
    local op = nil
-   local tiles = self.board.tiles
+   local state = EvalState(self.board)
    local value = 0
-   for ii=1,#tiles do
-      local tile = tiles[ii].tile
+
+   print('start')
+   while true do
+      local rec = state:next()
+      if not rec then
+         break
+      end
+
+      local tile = rec.tile
+      print(tile.n)
+
       if tile:isnumber() then
          if not op then
             value = tile.n
@@ -377,6 +514,8 @@ function Marker:evaluate()
          op = tile.n
       end
    end
+   print('end')
+
    return value
 end
 
@@ -397,20 +536,32 @@ function Marker:pos()
 end
 
 function Marker:update_animated(anim)
-   local nextpos = self.board:lastpos()
-   anim:animate_between(self:go(), self:pos(), nextpos + {0, 40}, .3)
+   local lastpos = self:pos()
+
+   while true do
+      local nextrec = self.state:next()
+      if not nextrec then
+         break
+      end
+      local nextpos = self.board:loc2center(nextrec.loc) + {0, 40}
+      anim:animate_between(self:go(), lastpos, nextpos, .3)
+      lastpos = nextpos
+   end
+
    anim:next(self:bind('update_total'))
    return anim
 end
 
 Hand = oo.class(oo.Object)
-function Hand:init(deck, board, max, offset)
+function Hand:init(deck, board, marker, max, offset)
    self.max = max
    self.tiles = {}
+   self.highlights = {}
+
    self.offset = vector.new(offset)
    self.deck = deck
-   self.highlights = {}
    self.board = board
+   self.marker = marker
    self:update()
 end
 
@@ -617,11 +768,11 @@ function init()
       end
 
       deck = Deck({40,600})
-      board = Board(vector.new({300, 100}), deck)
-      hand = Hand(deck, board, 5, {300,50})
-      score = Indicator(font_factory(3), {32, 64}, {0,0,0,1}, stage)
-      score:update('0')
+      board = Board(vector.new({300, 100}), deck, square_board(7,7))
+      score = Indicator(font_factory_big(1), {32, 64}, {0,0,0,1}, stage)
       marker = Marker(board, score)
+      hand = Hand(deck, board, marker, 5, {300,50})
+      score:update('0')
    end
 
    restart()
@@ -661,7 +812,8 @@ function init()
          hl:offset(brect:center())
 
          if click(input.mouse1) then
-            board:rotate_animated()
+            local anim = board:rotate_animated()
+            anim:next(hand:bind('update'))
          end
       else
          hl:offset({-100, -100})
