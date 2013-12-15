@@ -8,103 +8,24 @@ local Timer = require 'Timer'
 local Rect = require 'Rect'
 local DynO = require 'DynO'
 local Indicator = require 'Indicator'
+local Sequence = require 'Sequence'
+local Menu = require 'Menu'
 
 local czor = game:create_object('Compositor')
 local Tile
 local Board
 local Hand
 local Deck
-local Sequence
 local Marker
 
 local tw = 64
 local th = 64
-local nw = 9
-local nh = 9
+local nw = 5
+local nh = 5
 local padding = 8
 
 function background()
    czor:clear_with_color(util.rgba(255,255,255,255))
-end
-
-Sequence = oo.class(oo.Object)
-function Sequence:init()
-   self.queue = {}
-   self.running = false
-end
-
-local function lerp(start, stop, dt, rdt)
-   local s = (1 - rdt / dt)
-   local dx = stop - start
-   return start + dx * s
-end
-
-function Sequence:animate_between(go, start, stop, dt)
-   local animate_between = function(item)
-      local x = lerp(item.start, item.stop, item.dt, item.rdt)
-      item.go:pos(x)
-      item.rdt = item.rdt - world:dt()
-      if item.rdt <= 0 then
-         item.go:pos(item.stop)
-         return false
-      else
-         return true
-      end
-   end
-   self:next(animate_between, {go=go, start=start, stop=stop, dt=dt, rdt=dt})
-end
-
-function Sequence:rotate_between(go, start, stop, dt)
-   local rotate_between = function(item)
-      local a = lerp(item.start, item.stop, item.dt, item.rdt)
-      item.go:angle(a)
-      item.rdt = item.rdt - world:dt()
-      if item.rdt <= 0 then
-         item.go:angle(stop)
-         return false
-      else
-         return true
-      end
-   end
-   self:next(rotate_between, {go=go, start=start, stop=stop, dt=dt, rdt=dt})
-end
-
-function Sequence:wait(dt)
-   local wait = function(item)
-      item.rdt = item.rdt - world:dt()
-      return item.rdt > 0
-   end
-   self:next(wait, {rdt = dt})
-end
-
-function Sequence:next(fn, ...)
-   local lfn = function(item)
-      return fn(table.unpack(item))
-   end
-   table.insert(self.queue, {fn=lfn, arg={...}})
-end
-
-function Sequence:start()
-   if util.empty(self.queue) or self.running then
-      return
-   end
-
-   self.running = true
-   local comp
-
-   local thread = function()
-      local item = self.queue[1]
-      if not item.fn(item.arg) then
-         table.remove(self.queue, 1)
-         if util.empty(self.queue) then
-            comp:delete_me(1)
-            self.running = false
-            return
-         end
-      end
-   end
-
-   comp = stage:add_component('CScripted', {update_thread=util.fthread(thread)})
 end
 
 local DIRECTION = {
@@ -163,15 +84,18 @@ function Tile:show()
    self:hide(true)
    local go = self:go()
    self.t1 = go:add_component('CDrawText', {font=font, color={0,0,0,1}, message=str,
-                                            offset={-sw/2, -sh/8-2}})
+                                            offset={-sw/2, -sh/8-2},
+                                            layer=constant.BACKGROUND})
    self.t2 = go:add_component('CDrawText', {font=font, color={1,1,1,1}, message=str,
-                                            offset={-sw/2, -sh/8}})
+                                            offset={-sw/2, -sh/8},
+                                            layer=constant.BACKGROUND})
 
 
    local dir = DIRECTION[self.d]
    local _art = game:atlas_entry(constant.ATLAS, 'tile')
    self.t3 = go:add_component('CStaticSprite', {entry=_art,
-                                                angle_offset=dir.angle})
+                                                angle_offset=dir.angle,
+                                                layer=constant.BACKGROUND})
 end
 
 function Tile:hide(fully)
@@ -217,11 +141,15 @@ function Board:init(offset, deck)
    self.tiles = {}
 
    local mesh = self:board_mesh()
-   self.mesh = stage:add_component('CMesh', {mesh=mesh, layer=constant.BACKGROUND})
+   self.mesh = stage:add_component('CMesh', {mesh=mesh, layer=constant.BACKERGROUND})
 
    local tile = deck:draw_number()
    tile:direction('EAST')
    self:place_animated(tile)
+end
+
+function Board:terminate()
+   self.mesh:delete_me(1)
 end
 
 function Board:place_animated(tile)
@@ -238,7 +166,12 @@ end
 
 function Board:rotate_animated(tile)
    tile = tile or self:lastrec().tile
+
    local nextdir = self:next_direction()
+   if not nextdir then
+      -- no other position available
+      return
+   end
 
    local start = 0
    local stop = steps_between(tile:direction(), nextdir) * -math.pi/2
@@ -289,10 +222,12 @@ function Board:update()
    end
 
    local nl = self:next_active()
-   local cc = self:loc2center(nl)
-   self.hl = stage:add_component('CTestDisplay', {offset=cc, w=tw, h=th,
-                                                  color={.8,.8,1,1},
-                                                  layer=constant.BACKGROUND})
+   if nl then
+      local cc = self:loc2center(nl)
+      self.hl = stage:add_component('CTestDisplay', {offset=cc, w=tw, h=th,
+                                                     color={.8,.8,1,1},
+                                                     layer=constant.BACKERGROUND})
+   end
 end
 
 function Board:lastrec()
@@ -317,13 +252,13 @@ end
 
 function Board:next_active()
    if util.empty(self.tiles) then
-      return {1,5}
+      return {1,3}
    end
 
    local lastrec = self:lastrec()
    local lastloc = lastrec.loc
    local nl = lastrec.loc + DIRECTION[lastrec.tile.d].offset
-   if nl[1] < 1 or nl[1] > nw or nl[2] < 1 or nl[2] > nh then
+   if nl[1] < 1 or nl[1] > nw or nl[2] < 1 or nl[2] > nh or self:tile_at(nl) then
       return nil
    else
       return nl
@@ -407,9 +342,9 @@ function Marker:init(board, score)
    go:body_type(constant.STATIC)
 
    local _art = game:atlas_entry(constant.ATLAS, 'marker')
-   go:add_component('CStaticSprite', {entry=_art, layer=constant.PLAYER})
+   go:add_component('CStaticSprite', {entry=_art, layer=constant.FOREGROUND})
    self.value = Indicator(font_factory(1), {0, 16}, {0,0,0,1}, go)
-   self.value.text:layer(constant.FOREGROUND)
+   self.value.text:layer(constant.MENU)
    self.board = board
    self.score = score
    self.score_value = 0
@@ -548,6 +483,17 @@ function Hand:valid_tiles()
    return valids
 end
 
+function Hand:remove_highlights()
+   for ii=1,#self.highlights do
+      self.highlights[ii]:delete_me(1)
+   end
+   self.highlights = {}
+end
+
+function Hand:terminate()
+   self:remove_highlights()
+end
+
 function Hand:update()
    local anim = Sequence()
    for ii=1,self.max do
@@ -557,10 +503,7 @@ function Hand:update()
    end
 
    -- remove old highlights
-   for ii=1,#self.highlights do
-      self.highlights[ii]:delete_me(1)
-   end
-   self.highlights = {}
+   self:remove_highlights()
 
    -- add new highlights
    local hl = function()
@@ -577,12 +520,23 @@ function Hand:update()
    anim:start()
 end
 
+function Hand:no_more_moves()
+   return util.empty(self:valid_tiles()) or not self.board:next_active()
+end
+
+local GAME_OVER = constant.NEXT_EPHEMERAL_MESSAGE()
+function Hand:check_game_over()
+   if self:no_more_moves() then
+      stage:send_message(stage:create_message(GAME_OVER))
+   end
+end
+
 Deck = oo.class(oo.Object)
 function Deck:init(offset)
    self.offset = vector.new(offset)
 
    local values = {2, 3, 4, 4, 5, 5, 7, 9, 9,
-                   '+', '+', '+', '+', '-', '-', '-'}
+                   '+', '+', '+', '+', '-', '-', '-', '-'}
    values = util.rand_shuffle(values)
 
    self.tiles = {}
@@ -591,6 +545,9 @@ function Deck:init(offset)
       tile:hide()
       table.insert(self.tiles, tile)
    end
+end
+
+function Deck:terminate()
 end
 
 function Deck:draw()
@@ -621,10 +578,13 @@ function Deck:empty()
    return util.empty(self.tiles)
 end
 
-local PLAY_TILE = 1
-local ROTATE_TILE = 2
-
 function init()
+   local deck = nil
+   local board = nil
+   local hand = nil
+   local score = nil
+   local marker = nil
+
    util.install_basic_keymap()
    util.install_mouse_map()
    world:gravity({0,0})
@@ -632,14 +592,34 @@ function init()
    local cam = stage:find_component('Camera', nil)
    cam:pre_render(util.fthread(background))
 
-   local deck = Deck({40,600})
-   local board = Board(vector.new({300, 100}), deck)
-   local hand = Hand(deck, board, 5, {300,50})
-   local score = Indicator(font_factory(3), {32, 64}, {0,0,0,1}, stage)
-   score:update('0')
+   local clean = function()
+      deck:terminate()
+      board:terminate()
+      hand:terminate()
+      DynO.terminate_all(Tile)
+      DynO.terminate_all(Marker)
 
-   local marker = Marker(board, score)
+      deck = nil
+      board = nil
+      hand = nil
+      socre = nil
+      marker = nil
+   end
 
+   local restart = function()
+      if deck then
+         clean()
+      end
+
+      deck = Deck({40,600})
+      board = Board(vector.new({300, 100}), deck)
+      hand = Hand(deck, board, 5, {300,50})
+      score = Indicator(font_factory(3), {32, 64}, {0,0,0,1}, stage)
+      score:update('0')
+      marker = Marker(board, score)
+   end
+
+   restart()
    local hl = stage:add_component('CTestDisplay', {w=tw, h=th,
                                                    color={1,1,1,.3}})
    local click = util.rising_edge_trigger(false)
@@ -669,6 +649,7 @@ function init()
                local anim = board:place_animated(tile)
                marker:update_animated(anim)
                anim:next(hand:bind('update'))
+               anim:next(hand:bind('check_game_over'))
             end
          end
       elseif brect:contains(mouse) and #board.tiles > 1then
@@ -681,7 +662,15 @@ function init()
          hl:offset({-100, -100})
       end
    end
-   stage:add_component('CScripted', {update_thread=util.fthread(controls)})
+
+   local messages = function()
+      if stage:has_message(GAME_OVER) then
+         restart()
+      end
+   end
+
+   stage:add_component('CScripted', {update_thread=util.fthread(controls),
+                                     message_thread=util.fthread(messages)})
 
 end
 
