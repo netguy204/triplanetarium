@@ -38,8 +38,12 @@ marker = nil
 steam_manager = nil
 cscript = nil
 
+local levels = require 'levels'
+local level_idx = 5
+
+
 function background()
-   czor:clear_with_color(util.rgba(255,255,255,255))
+   czor:clear_with_color({1,1,1,1})
 end
 
 local DIRECTION = {
@@ -432,15 +436,15 @@ end
 function Board:rotate_animated(tile)
    tile = tile or self:lastrec().tile
 
+   local anim = Sequence()
    local nextdir = self:next_direction()
    if not nextdir then
       -- no other position available
-      return
+      return anim
    end
 
    local start = 0
    local stop = steps_between(tile:direction(), nextdir) * -math.pi/2
-   local anim = Sequence()
 
    anim:rotate_between(tile:go(), start, stop, .3)
    anim:next(function()
@@ -659,7 +663,6 @@ function EvalState:next()
    else
       -- check for a direction override and clear it
       local dir = self.next_dir or self.current.tile.d
-      self.next_dir = nil
 
       -- get the next tile
       local nl = self.current.loc + DIRECTION[dir].offset
@@ -669,6 +672,8 @@ function EvalState:next()
       -- direction as an override for the next call
       if nr and util.contains(self.seen, nr.tile) then
          self.next_dir = dir
+      elseif nr then
+         self.next_dir = nil
       end
 
       -- don't go past the end
@@ -688,6 +693,10 @@ function EvalState:last()
    while n do
       n = self:next()
    end
+   return self.current
+end
+
+function EvalState:peek()
    return self.current
 end
 
@@ -776,15 +785,27 @@ end
 
 function Marker:update_animated(anim)
    local lastpos = self:pos()
+   local lastrec = self.state:peek()
+
+   -- don't move if we're on the last tile that was placed
+   local blr = self.board:lastrec()
+   if lastrec and lastrec.loc:equals(blr.loc) then
+      return
+   end
 
    while true do
       local nextrec = self.state:next()
       if not nextrec then
          break
       end
+
       local nextpos = self.board:loc2center(nextrec.loc) + {0, 40}
       anim:animate_between(self:go(), lastpos, nextpos, .3)
       lastpos = nextpos
+
+      if nextrec.loc:equals(blr.loc) then
+         break
+      end
    end
 
    anim:next(self:bind('update_total'))
@@ -971,9 +992,6 @@ function Deck:empty()
    return util.empty(self.tiles)
 end
 
-local levels = require 'levels'
-local level_idx = 1
-
 function add_controls()
    local hl = stage:add_component('CTestDisplay', {w=tw, h=th,
                                                    color={1,1,1,.3}})
@@ -1038,7 +1056,7 @@ function add_controls()
             level_idx = level_idx + 1
             if level_idx > #levels then
                -- you win them all! (make it worth it)
-               anim:next(clean)
+               level_idx = 1
             end
          end
          anim:next(bind(setup_level, level_idx))
@@ -1081,7 +1099,7 @@ function setup_level(idx)
                              {0,0,0,1})
       local text = font:wrap_string(level.desc, screen_width-tw)
       desc:update(text)
-      score_offset[2] = font:string_height(text)
+      score_offset[2] = -font:string_height(text) - th/2
    end
 
    if not level.score then
