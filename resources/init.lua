@@ -36,6 +36,7 @@ hand = nil
 score = nil
 marker = nil
 steam_manager = nil
+cscript = nil
 
 function background()
    czor:clear_with_color(util.rgba(255,255,255,255))
@@ -47,6 +48,27 @@ local DIRECTION = {
    EAST =  {angle=-math.pi/2, offset=vector.new({1,0}), next='SOUTH', opposite='WEST'},
    WEST =  {angle=math.pi/2, offset=vector.new({-1,0}), next='NORTH', opposite='EAST'}
 }
+
+local function bind(fn, ...)
+   local args = {...}
+   return function(...)
+      fn(table.unpack(args), ...)
+   end
+end
+
+local sfx = {}
+
+function load_sfx(kind, names)
+   sfx[kind] = {}
+   for ii, name in ipairs(names) do
+      table.insert(sfx[kind], game:get_sound(name, 1.0))
+   end
+end
+
+function play_sfx(kind)
+   local snd = util.rand_choice(sfx[kind])
+   game:play_sound(snd, 1)
+end
 
 local function steps_between(start, stop)
    if start == stop then
@@ -979,8 +1001,14 @@ function add_controls()
          if click(input.mouse1) then
             if isvalid then
                local tile = hand:take(ii)
+
+               -- defalt to the orientation of the previous tile
+               local last = board:lastrec()
+               tile:direction(last.tile.d)
+
                local anim = board:place_animated(tile)
                marker:update_animated(anim)
+               anim:next(bind(play_sfx, 'thunk'))
                anim:next(hand:bind('update'))
                anim:next(hand:bind('check_game_over'))
             end
@@ -1000,21 +1028,26 @@ function add_controls()
    local messages = function()
       if stage:has_message(GAME_OVER) then
          local testwin = levels[level_idx].win
+         local anim = Sequence()
+
          if testwin() then
             -- next level!
+            local level = levels[level_idx]
+            level.win_animation(anim)
+
             level_idx = level_idx + 1
             if level_idx > #levels then
                -- you win them all! (make it worth it)
-               clean()
-               return
+               anim:next(clean)
             end
          end
-         setup_level(level_idx)
+         anim:next(bind(setup_level, level_idx))
+         anim:start()
       end
    end
 
-   stage:add_component('CScripted', {update_thread=util.fthread(controls),
-                                     message_thread=util.fthread(messages)})
+   cscript = stage:add_component('CScripted', {update_thread=util.fthread(controls),
+                                               message_thread=util.fthread(messages)})
 end
 
 function clean()
@@ -1036,11 +1069,31 @@ function setup_level(idx)
    local screen_width = screen_rect:width()
    local screen_height = screen_rect:height()
 
-   local bstr = levels[idx].bstr
-   local dstr = levels[idx].dstr
+   local level = levels[idx]
+   local bstr = level.bstr
+   local dstr = level.dstr
    local boardspec = parse_board(bstr, dstr)
+   local score_offset = vector.new({0,0})
+
+   if level.desc then
+      local font = font_factory(1)
+      local desc = Indicator(font, {screen_width/2, screen_height-th/2},
+                             {0,0,0,1})
+      local text = font:wrap_string(level.desc, screen_width-tw)
+      desc:update(text)
+      score_offset[2] = font:string_height(text)
+   end
+
+   if not level.score then
+      -- hide the score
+      score_offset[2] = -10000
+   end
+
    deck = Deck(vector.new({screen_width-tw, th}), boardspec.deck, false)
-   score = Indicator(font_factory_big(1), {tw/2, screen_height-th}, {0,0,0,1}, stage)
+
+   score = Indicator(font_factory_big(1),
+                     score_offset + {screen_width/2, screen_height-th/2},
+                     {0,0,0,1}, stage)
 
    board = Board(vector.new({0, 1.5*th}), deck, boardspec)
 
@@ -1051,6 +1104,7 @@ function setup_level(idx)
 
    score:update('0')
    add_controls()
+   util.loop_music({'resources/waterdancer.ogg'})
 end
 
 function init()
@@ -1062,4 +1116,6 @@ end
 
 function game_init()
    util.protect(init)()
+
+   load_sfx('thunk', {'resources/thunk.ogg'})
 end
