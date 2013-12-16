@@ -39,7 +39,7 @@ steam_manager = nil
 cscript = nil
 
 local levels = require 'levels'
-local level_idx = 5
+local level_idx = 1
 
 
 function background()
@@ -1061,6 +1061,7 @@ function add_controls()
          end
          anim:next(bind(setup_level, level_idx))
          anim:start()
+         cscript:delete_me(1)
       end
    end
 

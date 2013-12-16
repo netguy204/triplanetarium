@@ -2,7 +2,7 @@ local util = require 'util'
 local vector = require 'vector'
 local constant = require 'constant'
 local font_factory_big = require 'dejavu_font_big'
-
+local font_factory_mid = require 'dejavu_font_mid'
 
 local Rect = require 'Rect'
 local Indicator = require 'Indicator'
@@ -63,12 +63,19 @@ local function firework_win(anim)
 end
 
 local function game_win(anim)
+   local cam = stage:find_component('Camera', nil)
+   local screen_rect = Rect(cam:viewport())
+   local screen_width = screen_rect:width()
+   local screen_height = screen_rect:height()
+
    firework_win(anim)
    firework_win(anim)
 
-   local win = Indicator(font_factory_big(1), {screen_width/2, screen_height/2},
+   local font = font_factory_mid(1)
+   local win = Indicator(font, {screen_width/2, screen_height/3},
                          {0,0,0,1}, stage)
-   win:update('You completed all the levels! Check out resources/levels.lua to create your own.')
+   local str = 'You Win!'
+   win:update(str)
 
    anim:next(win:bind('terminate'))
 end
@@ -97,7 +104,7 @@ local levels = {
             '___    .',
             '___  ...'},
     dstr = '2+6-+44-',
-    desc = 'You draw new tiles until you run out.',
+    desc = 'You draw new tiles until the draw pile is depleted.',
     score = false,
     win = last_is_one,
     win_animation=firework_win},
@@ -109,7 +116,7 @@ local levels = {
             '___  .  ',
             '___  .. '},
     dstr = '43+-+9',
-    desc = 'Click on the last tile you\'ve placed to rotate it.',
+    desc = 'Click on the last tile you placed to rotate it.',
     score = false,
     win = last_is_one,
     win_animation=firework_win},
@@ -133,7 +140,7 @@ local levels = {
             '(s3)....',
             '___ ....',
             '___  ...'},
-    dstr = '43+-+962-3+3+45-6-+',
+    dstr = '43+-+9-2-3+3+45-6-+',
     desc = 'You score points every time you compute a 1. Try to get at least 2 points.',
     score = true,
     win = score_at_least(2),
