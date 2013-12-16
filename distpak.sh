@@ -9,10 +9,10 @@ fi
 mkdir -p $DIST
 mkdir $DIST/giggle
 
-cp strikerun-linux $DIST
-chmod +x $DIST/strikerun-linux
+cp equals1-linux $DIST
+chmod +x $DIST/equals1-linux
 
-cp strikerun.exe $DIST
+cp equals1.exe $DIST
 
 cp giggle/engine/sdlmain_nt.bin $DIST/giggle/runtime-mac
 cp run_on_mac.command $DIST/
