@@ -1,4 +1,5 @@
 local oo = require 'oo'
+local sfx = require 'sfx'
 local util = require 'util'
 local vector = require 'vector'
 local constant = require 'constant'
@@ -58,20 +59,6 @@ local function bind(fn, ...)
    return function(...)
       fn(table.unpack(args), ...)
    end
-end
-
-local sfx = {}
-
-function load_sfx(kind, names)
-   sfx[kind] = {}
-   for ii, name in ipairs(names) do
-      table.insert(sfx[kind], game:get_sound(name, 1.0))
-   end
-end
-
-function play_sfx(kind)
-   local snd = util.rand_choice(sfx[kind])
-   game:play_sound(snd, 1)
 end
 
 local function steps_between(start, stop)
@@ -996,8 +983,17 @@ function add_controls()
    local hl = stage:add_component('CTestDisplay', {w=tw, h=th,
                                                    color={1,1,1,.3}})
    local click = util.rising_edge_trigger(false)
+   local input_blocked = false
+
+   local unblock_input = function()
+      input_blocked = false
+   end
 
    local controls = function()
+      if input_blocked then
+         return
+      end
+
       local mouse = util.mouse_state()
       local input = util.input_state()
 
@@ -1018,6 +1014,7 @@ function add_controls()
          -- selected?
          if click(input.mouse1) then
             if isvalid then
+               input_blocked = true
                local tile = hand:take(ii)
 
                -- defalt to the orientation of the previous tile
@@ -1026,17 +1023,21 @@ function add_controls()
 
                local anim = board:place_animated(tile)
                marker:update_animated(anim)
-               anim:next(bind(play_sfx, 'thunk'))
+               anim:next(bind(sfx.play, 'thunk'))
                anim:next(hand:bind('update'))
                anim:next(hand:bind('check_game_over'))
+               anim:next(unblock_input)
             end
          end
       elseif brect:contains(mouse) and #board.tiles > 1then
          hl:offset(brect:center())
 
          if click(input.mouse1) then
+            input_blocked = true
             local anim = board:rotate_animated()
             anim:next(hand:bind('update'))
+            anim:next(unblock_input)
+            anim:start()
          end
       else
          hl:offset({-100, -100})
@@ -1136,5 +1137,5 @@ end
 function game_init()
    util.protect(init)()
 
-   load_sfx('thunk', {'resources/thunk.ogg'})
+   sfx.load('thunk', {'resources/thunk.ogg'})
 end

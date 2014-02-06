@@ -4,6 +4,7 @@ DIST=$1
 
 if [ -d $DIST ]; then
     rm -rf $DIST
+    rm -f $DIST.zipx
 fi
 
 mkdir -p $DIST
@@ -20,3 +21,6 @@ chmod +x $DIST/giggle/runtime-mac
 
 cp -r resources $DIST/
 cp -r giggle/engine_resources $DIST/giggle/
+
+zip -r $DIST.zip $DIST
+echo $DIST.zip
