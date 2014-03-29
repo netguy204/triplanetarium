@@ -1029,7 +1029,7 @@ function add_controls()
                anim:next(unblock_input)
             end
          end
-      elseif brect:contains(mouse) and #board.tiles > 1then
+      elseif brect:contains(mouse) and #board.tiles > 1 then
          hl:offset(brect:center())
 
          if click(input.mouse1) then
