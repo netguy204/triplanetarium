@@ -27,10 +27,6 @@ function HexGrid:init(size)
    self.vsep = 3 * self.height / 4
    self.width = math.sqrt(3) * size / 2
    self.hsep = self.width
-
-   self.xstep = vector.new({self.hsep, self.vsep})
-   self.ystep = vector.new({-self.hsep, self.vsep})
-   self.zstep = vector.new({0, 2*self.vsep})
 end
 
 function HexGrid:axial_to_cube(acoord)
@@ -45,8 +41,9 @@ function HexGrid:cube_to_axial(ccoord)
 end
 
 function HexGrid:center(acoord)
-   local ccoord = self:axial_to_cube(acoord)
-   return self.xstep * ccoord[1] + self.ystep * ccoord[2] + self.zstep * ccoord[3]
+   local x = self.size * math.sqrt(3) * (acoord[1] + acoord[2] / 2)
+   local y = self.size * 3 * acoord[2] / 2
+   return vector.new({x, y})
 end
 
 function HexGrid:dist(a1, a2)
@@ -84,8 +81,7 @@ function HexGrid:polar(dist, angle)
    return vector.new({dist * math.cos(angle), dist * math.sin(angle)})
 end
 
-function HexGrid:hex_lines(mesh, center, size)
-   local w = {1,1,1,1}
+function HexGrid:hex_lines(mesh, center, size, color)
    local step = math.pi * 2 / 6
 
    local start = center + self:polar(size, step * 0.5)
@@ -93,13 +89,13 @@ function HexGrid:hex_lines(mesh, center, size)
 
    for i = 1,5 do
       local current = center + self:polar(size, step * (i + 0.5))
-      mesh:add_point(last, w)
-      mesh:add_point(current, w)
+      mesh:add_point(last, color)
+      mesh:add_point(current, color)
       last = current
    end
 
-   mesh:add_point(last, w)
-   mesh:add_point(start, w)
+   mesh:add_point(last, color)
+   mesh:add_point(start, color)
 end
 
 function HexGrid:round_cube(cube)
@@ -129,7 +125,6 @@ end
 function HexGrid:point_to_axial(point)
    local q = (point[1] * math.sqrt(3) / 3 - point[2] / 3) / self.size
    local r = 2 * point[2] / (3 * self.size)
-
    return self:round_axial({q, r})
 end
 
@@ -145,12 +140,13 @@ function spawn_mesh()
    mesh:type(constant.LINES)
 
    local font = font_factory(0.8)
+   local w = {1,1,1,1}
 
    for xx = -4,4 do
       for yy = -4,4 do
          zz = -(xx + yy)
          local center = scenter + grid:center({xx, yy})
-         grid:hex_lines(mesh, vector.new(center), grid.size)
+         grid:hex_lines(mesh, vector.new(center), grid.size, w)
 
          local str = string.format('%d,%d', xx, yy)
          local strw = font:string_width(str)
@@ -172,9 +168,16 @@ function init()
    camera:pre_render(util.fthread(clear))
 
    local grid = spawn_mesh()
+   local mesh = game:create_object('Mesh')
+   mesh:type(constant.LINES)
+   local cmesh = stage:add_component('CMesh', {mesh=mesh})
+
    local thread = function()
-      local mouse = grid.center - util.mouse_state()
-      util.print(grid.grid:point_to_axial(mouse))
+      local mouse = util.mouse_state() - grid.center
+      local axial = grid.grid:point_to_axial(mouse)
+      local center = grid.center + grid.grid:center(axial)
+      mesh:clear()
+      grid.grid:hex_lines(mesh, center, grid.grid.size-5, {1,0,1,1})
    end
    stage:add_component('CScripted', {update_thread=util.fthread(thread)})
 end
