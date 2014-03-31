@@ -72,13 +72,61 @@ function HexGrid:neighbor(acoord, n)
    return self:cube_to_axial(self:add_cube(ccoord, HexGrid.neighbors[n]))
 end
 
+function HexGrid:axial_equal(a1, a2)
+   return a1[1] == a2[1] and a1[2] == a2[2]
+end
+
+function HexGrid:isNeighbor(a1, a2)
+   for i = 1,#HexGrid.neighbors do
+      if self:axial_equal(self:neighbor(a1, i), a2) then
+         return true
+      end
+   end
+   return false
+end
+
 function HexGrid:diagonal(acoord, n)
    local ccoord = self:axial_to_cube(acoord)
    return self:cube_to_axial(self:add_cube(ccoord, HexGrid.diagonals[n]))
 end
 
+function HexGrid:isDiagonal(a1, a2)
+   for i = 1,#HexGrid.diagonals do
+      if self:axial_equal(self:diagonal(a1, i), a2) then
+         return true
+      end
+   end
+   return false
+end
+
 function HexGrid:polar(dist, angle)
    return vector.new({dist * math.cos(angle), dist * math.sin(angle)})
+end
+
+function HexGrid:line_between(a1, a2, expand)
+   local n = self:dist(a1, a2)
+
+   local c1 = self:center(a1)
+   local c2 = self:center(a2)
+   local d = c1:dist(c2)
+
+   local result = {a1}
+   for i = 1, n do
+      local p = c1 * (1 - i/n) + c2 * (i/n)
+      local a = self:point_to_axial(p)
+      table.insert(result, a)
+      if expand then
+         local d1 = self:center(a):dist(p)
+         for j = 1,6 do
+            local na = self:neighbor(a, j)
+            local d2 = self:center(na):dist(p)
+            if math.abs(d1 - d2) < 1 then
+               table.insert(result, na)
+            end
+         end
+      end
+   end
+   return result
 end
 
 function HexGrid:hex_lines(mesh, center, size, color)
@@ -148,11 +196,11 @@ function spawn_mesh()
          local center = scenter + grid:center({xx, yy})
          grid:hex_lines(mesh, vector.new(center), grid.size, w)
 
-         local str = string.format('%d,%d', xx, yy)
-         local strw = font:string_width(str)
-         stage:add_component('CDrawText', {font=font, color={1,1,1,1}, message=str,
-                                           offset=center - {strw/2, 0},
-                                           layer=constant.BACKGROUND})
+         --local str = string.format('%d,%d', xx, yy)
+         --local strw = font:string_width(str)
+         --stage:add_component('CDrawText', {font=font, color={1,1,1,1}, message=str,
+         --                                  offset=center - {strw/2, 0},
+         --                                  layer=constant.BACKGROUND})
 
       end
    end
@@ -175,9 +223,12 @@ function init()
    local thread = function()
       local mouse = util.mouse_state() - grid.center
       local axial = grid.grid:point_to_axial(mouse)
-      local center = grid.center + grid.grid:center(axial)
+
       mesh:clear()
-      grid.grid:hex_lines(mesh, center, grid.grid.size-5, {1,0,1,1})
+      for ii,step in ipairs(grid.grid:line_between({0,0}, axial, 1)) do
+         local center = grid.center + grid.grid:center(step)
+         grid.grid:hex_lines(mesh, center, grid.grid.size-4, {1,0,1,1})
+      end
    end
    stage:add_component('CScripted', {update_thread=util.fthread(thread)})
 end
